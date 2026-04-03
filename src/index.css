@@ -1,0 +1,79 @@
+@import "tailwindcss";
+
+@theme {
+  --color-sp-bg: #0a0e1a;
+  --color-sp-surface: #111827;
+  --color-sp-surface-2: #1a2234;
+  --color-sp-border: #1f2937;
+  --color-sp-border-2: #2d3748;
+  --color-sp-accent: #38bdf8;
+  --color-sp-accent-dim: #0ea5e9;
+  --color-sp-warn: #f59e0b;
+  --color-sp-success: #10b981;
+  --color-sp-error: #ef4444;
+  --color-sp-text: #e2e8f0;
+  --color-sp-text-muted: #64748b;
+  --color-sp-text-dim: #94a3b8;
+
+  --font-sans: "Inter", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, monospace;
+}
+
+html, body {
+  background-color: #0a0e1a;
+  color: #e2e8f0;
+  color-scheme: dark;
+}
+
+body {
+  margin: 0;
+  font-family: "Inter", system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+#root {
+  min-height: 100svh;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Spectral gradient animation for hero */
+@keyframes spectral-shift {
+  0%   { background-position: 0% 50%; }
+  50%  { background-position: 100% 50%; }
+  100% { background-position: 0% 50%; }
+}
+
+.spectral-gradient {
+  background: linear-gradient(135deg, #7c3aed, #2563eb, #0891b2, #059669, #d97706, #dc2626);
+  background-size: 400% 400%;
+  animation: spectral-shift 8s ease infinite;
+}
+
+/* Custom range slider */
+input[type="range"] {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 4px;
+  border-radius: 2px;
+  background: #1f2937;
+  outline: none;
+}
+input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #38bdf8;
+  cursor: pointer;
+  border: 2px solid #0a0e1a;
+}
+input[type="range"]::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #38bdf8;
+  cursor: pointer;
+  border: 2px solid #0a0e1a;
+}

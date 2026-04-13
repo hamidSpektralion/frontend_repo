@@ -4,6 +4,8 @@ import type {
   SpectralDataset, ViewerState, ViewMode,
 } from '../types/spectral';
 
+export const API_BASE = 'http://localhost:8000';
+
 interface ViewerStore extends ViewerState {
   setBand: (index: number) => void;
   setZoom: (zoom: number) => void;
@@ -20,6 +22,7 @@ interface ViewerStore extends ViewerState {
   setHoveredSpectrum: (values: number[] | null) => void;
   pinSpectrum: () => void;
   clearPinnedSpectrum: () => void;
+  fetchBandFromBackend: (bandIndex?: number) => Promise<void>;
 }
 
 const defaultState: ViewerState = {
@@ -38,12 +41,34 @@ const defaultState: ViewerState = {
   pinnedSpectrum: null,
 };
 
-export const useViewerStore = create<ViewerStore>((set) => ({
+export const useViewerStore = create<ViewerStore>((set, get) => ({
   ...defaultState,
-  setBand: (index) => set({ activeBandIndex: index }),
+  fetchBandFromBackend: async (bandIndex?: number) => {
+    const { dataset, activeBandIndex, colormap } = get();
+    if (!dataset?.sessionId) return;
+    const idx = bandIndex ?? activeBandIndex;
+    try {
+      const res = await fetch(
+        `${API_BASE}/api/band/${dataset.sessionId}/${idx}?colormap=${colormap}`,
+      );
+      if (!res.ok) return;
+      const blob = await res.blob();
+      const dataUrl = URL.createObjectURL(blob);
+      set((s) => ({ dataset: s.dataset ? { ...s.dataset, dataUrl } : null }));
+    } catch {
+      // network error — leave existing preview
+    }
+  },
+  setBand: (index) => {
+    set({ activeBandIndex: index });
+    get().fetchBandFromBackend(index);
+  },
   setZoom: (zoom) => set({ zoom: Math.max(0.1, Math.min(20, zoom)) }),
   setPan: (panX, panY) => set({ panX, panY }),
-  setColormap: (colormap) => set({ colormap }),
+  setColormap: (colormap) => {
+    set({ colormap });
+    get().fetchBandFromBackend();
+  },
   toggleGrid: () => set((s) => ({ showGrid: !s.showGrid })),
   resetView: () => set({ zoom: 1, panX: 0, panY: 0 }),
   loadDataset: (dataset) => {

@@ -6,7 +6,7 @@ import { SettingsPage } from './pages/SettingsPage';
 
 export default function App() {
   return (
-    <BrowserRouter>
+    <BrowserRouter basename="/frontend_repo/">
       <Routes>
         <Route path="/" element={<HomePage />} />
         <Route path="/viewer" element={<ViewerPage />} />

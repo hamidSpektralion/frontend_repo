@@ -1,9 +1,10 @@
 export type ProcessingModuleId =
-  | 'denoising'
-  | 'super-resolution'
-  | 'white-balance'
+  | 'demosaicking'
   | 'dark-calibration'
-  | 'normalization';
+  | 'white-balance'
+  | 'denoising'
+  | 'normalization'
+  | 'super-resolution';
 
 export type PipelineStatus = 'idle' | 'running' | 'complete' | 'error';
 
@@ -13,6 +14,11 @@ export interface ProcessingModule {
   enabled: boolean;
   order: number;
   config: Record<string, unknown>;
+}
+
+export interface DemosaickingConfig {
+  pattern: '4x4' | '5x5' | '2x2';
+  method: 'bilinear' | 'malvar' | 'nn';
 }
 
 export interface DenoisingConfig {

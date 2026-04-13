@@ -1,41 +1,48 @@
 import { create } from 'zustand';
 import type { ProcessingModule, PipelineStatus } from '../types/pipeline';
-import { useViewerStore } from './viewerStore';
+import { useViewerStore, API_BASE } from './viewerStore';
 
 const defaultModules: ProcessingModule[] = [
+  {
+    id: 'demosaicking',
+    label: 'Demosaicking',
+    enabled: false,
+    order: 0,
+    config: { pattern: '4x4', method: 'bilinear' },
+  },
   {
     id: 'dark-calibration',
     label: 'Dark Calibration',
     enabled: false,
-    order: 0,
+    order: 1,
     config: { source: 'none', integrationTime: 100, temperatureCompensation: false },
   },
   {
     id: 'white-balance',
     label: 'White Balance',
     enabled: false,
-    order: 1,
+    order: 2,
     config: { mode: 'auto', gainR: 1.0, gainG: 1.0, gainB: 1.0 },
   },
   {
     id: 'denoising',
     label: 'Denoising',
     enabled: false,
-    order: 2,
+    order: 3,
     config: { algorithm: 'bilateral', strength: 50, spatialSigma: 2, spectralSigma: 10 },
   },
   {
     id: 'normalization',
     label: 'Normalization',
     enabled: false,
-    order: 3,
+    order: 4,
     config: { method: 'minmax', clipLow: 0, clipHigh: 0, perBand: false },
   },
   {
     id: 'super-resolution',
     label: 'Super Resolution',
     enabled: false,
-    order: 4,
+    order: 5,
     config: { scaleFactor: 2, model: 'edsr', sharpness: 50 },
   },
 ];
@@ -54,6 +61,9 @@ function applyModuleFilter(dataUrl: string, mod: ProcessingModule): Promise<stri
       const ctx = canvas.getContext('2d')!;
 
       switch (mod.id) {
+        case 'demosaicking':
+          // Demosaicking is handled via backend API — skip canvas preview
+          break;
         case 'dark-calibration':
           ctx.filter = 'brightness(1.08) contrast(1.1)';
           break;
@@ -104,7 +114,7 @@ interface PipelineStore {
   toggleModule: (id: string) => void;
   updateModuleConfig: (id: string, config: Record<string, unknown>) => void;
   reorderModules: (fromIndex: number, toIndex: number) => void;
-  runPipeline: () => void;
+  runPipeline: () => Promise<void>;
   cancelPipeline: () => void;
 }
 
@@ -134,34 +144,70 @@ export const usePipelineStore = create<PipelineStore>((set, get) => ({
       return { modules: mods.map((m, i) => ({ ...m, order: i })) };
     }),
 
-  runPipeline: () => {
-    const enabledCount = get().modules.filter((m) => m.enabled).length;
+  runPipeline: async () => {
+    const modules = get().modules;
+    const enabledCount = modules.filter((m) => m.enabled).length;
     if (enabledCount === 0) return;
     set({ status: 'running', progress: 0, errorMessage: null });
 
-    let p = 0;
-    const interval = setInterval(() => {
-      p += 100 / (enabledCount * 10);
-      if (p >= 100) {
-        clearInterval(interval);
-        set({ progress: 100 });
+    const viewerState = useViewerStore.getState();
+    const { dataset } = viewerState;
 
-        // Apply canvas-based processing to the preview, then mark complete
-        const { dataset, updateDatasetUrl } = useViewerStore.getState();
-        if (dataset?.dataUrl) {
-          applyPipelineProcessing(dataset.dataUrl, get().modules)
-            .then((newUrl) => {
-              updateDatasetUrl(newUrl);
-              set({ status: 'complete' });
-            })
-            .catch(() => set({ status: 'complete' }));
+    // ── Step 1: run backend demosaicking if enabled and we have a session ────
+    const demosaickingMod = modules.find((m) => m.id === 'demosaicking' && m.enabled);
+    if (demosaickingMod && dataset?.sessionId) {
+      try {
+        const res = await fetch(`${API_BASE}/api/demosaicking`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            session_id: dataset.sessionId,
+            pattern: demosaickingMod.config.pattern ?? '4x4',
+            method: demosaickingMod.config.method ?? 'bilinear',
+          }),
+        });
+        if (res.ok) {
+          const meta = await res.json() as {
+            bands: number; wavelengths: number[]; width: number; height: number;
+          };
+          // Update dataset metadata in viewer store
+          useViewerStore.setState((s) => ({
+            dataset: s.dataset ? {
+              ...s.dataset,
+              bands: meta.bands,
+              wavelengths: meta.wavelengths,
+              width: meta.width,
+              height: meta.height,
+            } : null,
+            activeBandIndex: 0,
+          }));
+          // Fetch new band 0 preview
+          await useViewerStore.getState().fetchBandFromBackend(0);
         } else {
-          set({ status: 'complete' });
+          const err = await res.json().catch(() => ({ detail: 'Demosaicking failed' }));
+          set({ status: 'error', errorMessage: err.detail ?? 'Demosaicking failed' });
+          return;
         }
-      } else {
-        set({ progress: Math.min(p, 99) });
+      } catch {
+        set({ status: 'error', errorMessage: 'Cannot reach backend for demosaicking.' });
+        return;
       }
-    }, 150);
+    }
+
+    set({ progress: 30 });
+
+    // ── Step 2: canvas-based preview for remaining modules ───────────────────
+    const { dataset: updatedDataset, updateDatasetUrl } = useViewerStore.getState();
+    if (updatedDataset?.dataUrl) {
+      try {
+        const newUrl = await applyPipelineProcessing(updatedDataset.dataUrl, modules);
+        updateDatasetUrl(newUrl);
+      } catch {
+        // non-fatal — preview stays as-is
+      }
+    }
+
+    set({ progress: 100, status: 'complete' });
   },
 
   cancelPipeline: () => set({ status: 'idle', progress: 0 }),

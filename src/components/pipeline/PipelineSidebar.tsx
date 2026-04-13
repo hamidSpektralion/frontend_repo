@@ -2,6 +2,7 @@ import { Settings2, ChevronsUpDown } from 'lucide-react';
 import { usePipelineStore } from '../../store/pipelineStore';
 import { PipelineModule } from './PipelineModule';
 import { PipelineRunBar } from './PipelineRunBar';
+import { DemosaickingModule } from './modules/DemosaickingModule';
 import { DenoisingModule } from './modules/DenoisingModule';
 import { SuperResolutionModule } from './modules/SuperResolutionModule';
 import { WhiteBalanceModule } from './modules/WhiteBalanceModule';
@@ -11,6 +12,7 @@ import type { ProcessingModuleId } from '../../types/pipeline';
 import type { ReactNode } from 'react';
 
 const moduleContents: Record<ProcessingModuleId, ReactNode> = {
+  'demosaicking': <DemosaickingModule />,
   'dark-calibration': <DarkCalibrationModule />,
   'white-balance': <WhiteBalanceModule />,
   'denoising': <DenoisingModule />,

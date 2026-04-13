@@ -16,6 +16,7 @@ export interface SpectralDataset {
   width: number;
   height: number;
   dataUrl?: string;
+  sessionId?: string;            // backend session_id for image_io-loaded files
   pixelData?: Uint8ClampedArray; // RGBA from ImageData, for PNG/JPG pixel probing
   spectraCube?: Float32Array;    // [height * width * bands] row-major, for .mat probing
 }

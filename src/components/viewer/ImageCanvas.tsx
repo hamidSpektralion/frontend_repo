@@ -1,8 +1,7 @@
 import { useRef, useState } from 'react';
 import { Upload, FlaskConical, Loader2 } from 'lucide-react';
-import { useViewerStore } from '../../store/viewerStore';
+import { useViewerStore, API_BASE } from '../../store/viewerStore';
 import type { SpectralDataset } from '../../types/spectral';
-import { parseMatFile, matVarsToSpectralCube } from '../../utils/matParser';
 
 // ─── Spectrum helpers ─────────────────────────────────────────────────────────
 
@@ -48,76 +47,58 @@ function createDemoDataset(): SpectralDataset {
   };
 }
 
-// ─── File loaders ─────────────────────────────────────────────────────────────
+// ─── Backend uploader ─────────────────────────────────────────────────────────
 
-function loadImageFile(file: File, onLoaded: (ds: SpectralDataset) => void) {
-  const url = URL.createObjectURL(file);
-  const img = new Image();
-  img.onload = () => {
-    const MAX = 1024;
-    let w = img.naturalWidth, h = img.naturalHeight;
-    if (w > MAX || h > MAX) {
-      const s = MAX / Math.max(w, h);
-      w = Math.round(w * s);
-      h = Math.round(h * s);
-    }
-    const canvas = document.createElement('canvas');
-    canvas.width = w; canvas.height = h;
-    const ctx = canvas.getContext('2d')!;
-    ctx.drawImage(img, 0, 0, w, h);
-    const { data } = ctx.getImageData(0, 0, w, h);
-
-    const wavelengths: number[] = [];
-    for (let wl = 400; wl <= 700; wl += 10) wavelengths.push(wl);
-
-    onLoaded({
-      id: file.name,
-      name: file.name.replace(/\.[^.]+$/, ''),
-      bands: wavelengths.length,
-      wavelengths,
-      width: w,
-      height: h,
-      dataUrl: canvas.toDataURL(),
-      pixelData: data,
-    });
-    URL.revokeObjectURL(url);
-  };
-  img.onerror = () => URL.revokeObjectURL(url);
-  img.src = url;
-}
-
-async function loadMatFile(
+async function uploadToBackend(
   file: File,
+  colormap: string,
   onLoaded: (ds: SpectralDataset) => void,
   onError: (msg: string) => void,
 ) {
+  const form = new FormData();
+  form.append('file', file);
+
+  let ingestJson: {
+    session_id: string; bands: number; wavelengths: number[];
+    width: number; height: number;
+  };
   try {
-    const buffer = await file.arrayBuffer();
-    const vars   = await parseMatFile(buffer);
-
-    if (vars.length === 0) {
-      onError('No numeric arrays found in this .mat file.');
+    const res = await fetch(`${API_BASE}/api/ingest`, { method: 'POST', body: form });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ detail: 'Upload failed' }));
+      onError(err.detail ?? 'Upload failed');
       return;
     }
+    ingestJson = await res.json();
+  } catch {
+    onError('Cannot reach backend — make sure the server is running on port 8000.');
+    return;
+  }
 
-    const cube = matVarsToSpectralCube(vars);
-    if (!cube) {
-      onError('Could not find a 2-D or 3-D numeric array in this .mat file.');
+  // Fetch band 0 preview
+  try {
+    const bandRes = await fetch(
+      `${API_BASE}/api/band/${ingestJson.session_id}/0?colormap=${colormap}`,
+    );
+    if (!bandRes.ok) {
+      onError('Could not fetch band preview from backend.');
       return;
     }
+    const blob = await bandRes.blob();
+    const dataUrl = URL.createObjectURL(blob);
 
     onLoaded({
-      id:          file.name,
-      name:        file.name.replace(/\.mat$/i, ''),
-      bands:       cube.bands,
-      wavelengths: cube.wavelengths,
-      width:       cube.width,
-      height:      cube.height,
-      dataUrl:     cube.displayUrl,
-      spectraCube: cube.data,
+      id:          ingestJson.session_id,
+      name:        file.name.replace(/\.[^.]+$/, ''),
+      sessionId:   ingestJson.session_id,
+      bands:       ingestJson.bands,
+      wavelengths: ingestJson.wavelengths,
+      width:       ingestJson.width,
+      height:      ingestJson.height,
+      dataUrl,
     });
-  } catch (err) {
-    onError(err instanceof Error ? err.message : 'Failed to parse .mat file');
+  } catch {
+    onError('Failed to fetch band preview.');
   }
 }
 
@@ -140,16 +121,12 @@ export function ImageCanvas() {
     setLoadError(null);
     setLoading(true);
 
-    const ext = file.name.split('.').pop()?.toLowerCase() ?? '';
-    if (ext === 'mat') {
-      await loadMatFile(
-        file,
-        (ds) => { loadDataset(ds); setLoading(false); },
-        (msg) => { setLoadError(msg); setLoading(false); },
-      );
-    } else {
-      loadImageFile(file, (ds) => { loadDataset(ds); setLoading(false); });
-    }
+    await uploadToBackend(
+      file,
+      colormap,
+      (ds) => { loadDataset(ds); setLoading(false); },
+      (msg) => { setLoadError(msg); setLoading(false); },
+    );
   };
 
   // ── Hover: pixel position → spectral curve ──────────────────────────────────
@@ -207,7 +184,7 @@ export function ImageCanvas() {
       <input
         ref={fileInputRef}
         type="file"
-        accept="image/*,.mat,.hdr,.tif,.tiff,.nc,.envi"
+        accept=".tif,.tiff,.hdr,.h5,.hdf5,.he5,.npy,.mat,.png,.jpg,.jpeg,.bmp"
         className="hidden"
         onChange={handleFileChange}
       />
@@ -235,7 +212,7 @@ export function ImageCanvas() {
             <div>
               <p className="text-sp-text-dim font-medium">No dataset loaded</p>
               <p className="text-xs text-sp-text-muted mt-1">
-                Supports PNG, JPG, and MATLAB <span className="font-mono text-sp-text-dim">.mat</span> (v5)
+                Supports TIFF, ENVI, HDF5, NumPy, MATLAB, PNG, JPG
               </p>
             </div>
 

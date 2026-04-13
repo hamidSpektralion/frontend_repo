@@ -23,6 +23,7 @@ interface ViewerStore extends ViewerState {
   pinSpectrum: () => void;
   clearPinnedSpectrum: () => void;
   fetchBandFromBackend: (bandIndex?: number) => Promise<void>;
+  clearDataset: () => void;
 }
 
 const defaultState: ViewerState = {
@@ -103,4 +104,5 @@ export const useViewerStore = create<ViewerStore>((set, get) => ({
   setHoveredSpectrum: (hoveredSpectrum) => set({ hoveredSpectrum }),
   pinSpectrum: () => set((s) => ({ pinnedSpectrum: s.hoveredSpectrum ?? s.pinnedSpectrum })),
   clearPinnedSpectrum: () => set({ pinnedSpectrum: null }),
+  clearDataset: () => set({ ...defaultState }),
 }));

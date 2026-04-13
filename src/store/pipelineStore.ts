@@ -47,62 +47,36 @@ const defaultModules: ProcessingModule[] = [
   },
 ];
 
-// ─── Canvas-based preview processing ─────────────────────────────────────────
+// ─── Backend API call for each module ────────────────────────────────────────
 
-function applyModuleFilter(dataUrl: string, mod: ProcessingModule): Promise<string> {
-  return new Promise((resolve) => {
-    const img = new Image();
-    img.onload = () => {
-      const scale =
-        mod.id === 'super-resolution' ? ((mod.config.scaleFactor as number) ?? 2) : 1;
-      const canvas = document.createElement('canvas');
-      canvas.width  = img.width  * scale;
-      canvas.height = img.height * scale;
-      const ctx = canvas.getContext('2d')!;
-
-      switch (mod.id) {
-        case 'demosaicking':
-          // Demosaicking is handled via backend API — skip canvas preview
-          break;
-        case 'dark-calibration':
-          ctx.filter = 'brightness(1.08) contrast(1.1)';
-          break;
-        case 'white-balance':
-          ctx.filter = 'saturate(1.2) hue-rotate(5deg)';
-          break;
-        case 'denoising': {
-          const strength = (mod.config.strength as number ?? 50) / 100;
-          ctx.filter = `blur(${(strength * 1.2).toFixed(2)}px)`;
-          break;
-        }
-        case 'normalization':
-          ctx.filter = 'contrast(1.25) brightness(1.03)';
-          break;
-        case 'super-resolution':
-          ctx.filter = 'contrast(1.05)';
-          break;
-      }
-
-      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-      resolve(canvas.toDataURL('image/png'));
-    };
-    img.src = dataUrl;
-  });
-}
-
-async function applyPipelineProcessing(
-  dataUrl: string,
-  modules: ProcessingModule[],
-): Promise<string> {
-  const enabled = [...modules]
-    .filter((m) => m.enabled)
-    .sort((a, b) => a.order - b.order);
-  let current = dataUrl;
-  for (const mod of enabled) {
-    current = await applyModuleFilter(current, mod);
+function buildRequestBody(sessionId: string, mod: ProcessingModule): object {
+  const c = mod.config;
+  switch (mod.id) {
+    case 'demosaicking':
+      return { session_id: sessionId, pattern: c.pattern ?? '4x4', method: c.method ?? 'bilinear' };
+    case 'dark-calibration':
+      return { session_id: sessionId, integration_time: c.integrationTime ?? 100, temperature_compensation: c.temperatureCompensation ?? false };
+    case 'white-balance':
+      return { session_id: sessionId, mode: c.mode ?? 'auto', gain_r: c.gainR ?? 1.0, gain_g: c.gainG ?? 1.0, gain_b: c.gainB ?? 1.0 };
+    case 'denoising':
+      return { session_id: sessionId, algorithm: c.algorithm ?? 'bilateral', strength: c.strength ?? 50, spatial_sigma: c.spatialSigma ?? 2, spectral_sigma: c.spectralSigma ?? 10 };
+    case 'normalization':
+      return { session_id: sessionId, method: c.method ?? 'minmax', clip_low: c.clipLow ?? 0, clip_high: c.clipHigh ?? 0, per_band: c.perBand ?? false };
+    case 'super-resolution':
+      return { session_id: sessionId, scale_factor: c.scaleFactor ?? 2, model: c.model ?? 'bicubic', sharpness: c.sharpness ?? 50 };
+    default:
+      return { session_id: sessionId };
   }
-  return current;
 }
+
+const MODULE_ENDPOINT: Record<string, string> = {
+  'demosaicking':     '/api/demosaicking',
+  'dark-calibration': '/api/dark-calibration',
+  'white-balance':    '/api/white-balance',
+  'denoising':        '/api/denoising',
+  'normalization':    '/api/normalization',
+  'super-resolution': '/api/super-resolution',
+};
 
 // ─── Store ────────────────────────────────────────────────────────────────────
 
@@ -146,68 +120,63 @@ export const usePipelineStore = create<PipelineStore>((set, get) => ({
 
   runPipeline: async () => {
     const modules = get().modules;
-    const enabledCount = modules.filter((m) => m.enabled).length;
-    if (enabledCount === 0) return;
+    const enabled = [...modules].filter((m) => m.enabled).sort((a, b) => a.order - b.order);
+    if (enabled.length === 0) return;
+
+    const { dataset } = useViewerStore.getState();
+    if (!dataset?.sessionId) {
+      set({ status: 'error', errorMessage: 'Load a file first before running the pipeline.' });
+      return;
+    }
+
     set({ status: 'running', progress: 0, errorMessage: null });
+    const step = 100 / enabled.length;
 
-    const viewerState = useViewerStore.getState();
-    const { dataset } = viewerState;
+    for (let i = 0; i < enabled.length; i++) {
+      const mod = enabled[i];
+      const endpoint = MODULE_ENDPOINT[mod.id];
+      if (!endpoint) continue;
 
-    // ── Step 1: run backend demosaicking if enabled and we have a session ────
-    const demosaickingMod = modules.find((m) => m.id === 'demosaicking' && m.enabled);
-    if (demosaickingMod && dataset?.sessionId) {
       try {
-        const res = await fetch(`${API_BASE}/api/demosaicking`, {
+        const res = await fetch(`${API_BASE}${endpoint}`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            session_id: dataset.sessionId,
-            pattern: demosaickingMod.config.pattern ?? '4x4',
-            method: demosaickingMod.config.method ?? 'bilinear',
-          }),
+          body: JSON.stringify(buildRequestBody(dataset.sessionId, mod)),
         });
-        if (res.ok) {
-          const meta = await res.json() as {
-            bands: number; wavelengths: number[]; width: number; height: number;
-          };
-          // Update dataset metadata in viewer store
-          useViewerStore.setState((s) => ({
-            dataset: s.dataset ? {
-              ...s.dataset,
-              bands: meta.bands,
-              wavelengths: meta.wavelengths,
-              width: meta.width,
-              height: meta.height,
-            } : null,
-            activeBandIndex: 0,
-          }));
-          // Fetch new band 0 preview
-          await useViewerStore.getState().fetchBandFromBackend(0);
-        } else {
-          const err = await res.json().catch(() => ({ detail: 'Demosaicking failed' }));
-          set({ status: 'error', errorMessage: err.detail ?? 'Demosaicking failed' });
+
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({ detail: `${mod.label} failed` }));
+          set({ status: 'error', errorMessage: err.detail ?? `${mod.label} failed` });
           return;
         }
+
+        const meta = await res.json() as {
+          bands: number; wavelengths: number[]; width: number; height: number;
+        };
+
+        // Update dataset metadata (bands/dimensions may change after demosaicking or SR)
+        useViewerStore.setState((s) => ({
+          dataset: s.dataset ? {
+            ...s.dataset,
+            bands: meta.bands,
+            wavelengths: meta.wavelengths,
+            width: meta.width,
+            height: meta.height,
+          } : null,
+          activeBandIndex: Math.min(useViewerStore.getState().activeBandIndex, meta.bands - 1),
+        }));
+
       } catch {
-        set({ status: 'error', errorMessage: 'Cannot reach backend for demosaicking.' });
+        set({ status: 'error', errorMessage: `Cannot reach backend for ${mod.label}.` });
         return;
       }
+
+      set({ progress: Math.round(step * (i + 1)) });
     }
 
-    set({ progress: 30 });
-
-    // ── Step 2: canvas-based preview for remaining modules ───────────────────
-    const { dataset: updatedDataset, updateDatasetUrl } = useViewerStore.getState();
-    if (updatedDataset?.dataUrl) {
-      try {
-        const newUrl = await applyPipelineProcessing(updatedDataset.dataUrl, modules);
-        updateDatasetUrl(newUrl);
-      } catch {
-        // non-fatal — preview stays as-is
-      }
-    }
-
-    set({ progress: 100, status: 'complete' });
+    // Re-fetch the current band preview after all modules ran
+    await useViewerStore.getState().fetchBandFromBackend();
+    set({ status: 'complete', progress: 100 });
   },
 
   cancelPipeline: () => set({ status: 'idle', progress: 0 }),

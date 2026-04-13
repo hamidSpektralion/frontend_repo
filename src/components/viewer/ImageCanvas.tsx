@@ -1,7 +1,8 @@
 import { useRef, useState } from 'react';
 import { Upload, FlaskConical, Loader2 } from 'lucide-react';
-import { useViewerStore, API_BASE } from '../../store/viewerStore';
+import { useViewerStore } from '../../store/viewerStore';
 import type { SpectralDataset } from '../../types/spectral';
+import { uploadToBackend } from '../../utils/uploadFile';
 
 // ─── Spectrum helpers ─────────────────────────────────────────────────────────
 
@@ -45,61 +46,6 @@ function createDemoDataset(): SpectralDataset {
     width: 512,
     height: 512,
   };
-}
-
-// ─── Backend uploader ─────────────────────────────────────────────────────────
-
-async function uploadToBackend(
-  file: File,
-  colormap: string,
-  onLoaded: (ds: SpectralDataset) => void,
-  onError: (msg: string) => void,
-) {
-  const form = new FormData();
-  form.append('file', file);
-
-  let ingestJson: {
-    session_id: string; bands: number; wavelengths: number[];
-    width: number; height: number;
-  };
-  try {
-    const res = await fetch(`${API_BASE}/api/ingest`, { method: 'POST', body: form });
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({ detail: 'Upload failed' }));
-      onError(err.detail ?? 'Upload failed');
-      return;
-    }
-    ingestJson = await res.json();
-  } catch {
-    onError('Cannot reach backend — make sure the server is running on port 8000.');
-    return;
-  }
-
-  // Fetch band 0 preview
-  try {
-    const bandRes = await fetch(
-      `${API_BASE}/api/band/${ingestJson.session_id}/0?colormap=${colormap}`,
-    );
-    if (!bandRes.ok) {
-      onError('Could not fetch band preview from backend.');
-      return;
-    }
-    const blob = await bandRes.blob();
-    const dataUrl = URL.createObjectURL(blob);
-
-    onLoaded({
-      id:          ingestJson.session_id,
-      name:        file.name.replace(/\.[^.]+$/, ''),
-      sessionId:   ingestJson.session_id,
-      bands:       ingestJson.bands,
-      wavelengths: ingestJson.wavelengths,
-      width:       ingestJson.width,
-      height:      ingestJson.height,
-      dataUrl,
-    });
-  } catch {
-    onError('Failed to fetch band preview.');
-  }
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────

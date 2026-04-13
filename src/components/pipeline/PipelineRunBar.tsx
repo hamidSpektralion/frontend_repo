@@ -1,19 +1,27 @@
 import { Play, Square, CheckCircle, AlertCircle, Undo2, Download } from 'lucide-react';
 import { usePipelineStore } from '../../store/pipelineStore';
-import { useViewerStore } from '../../store/viewerStore';
+import { useViewerStore, API_BASE } from '../../store/viewerStore';
 import { Button } from '../ui/Button';
 
 export function PipelineRunBar() {
-  const { modules, status, progress, runPipeline, cancelPipeline } = usePipelineStore();
-  const { dataset, previousDataUrl, revertDataset } = useViewerStore();
+  const { modules, status, progress, errorMessage, runPipeline, cancelPipeline } = usePipelineStore();
+  const { dataset, previousDataUrl, revertDataset, colormap } = useViewerStore();
   const enabledCount = modules.filter((m) => m.enabled).length;
 
   const handleDownload = () => {
-    if (!dataset?.dataUrl) return;
-    const a = document.createElement('a');
-    a.href = dataset.dataUrl;
-    a.download = `${dataset.name}_processed.png`;
-    a.click();
+    if (!dataset) return;
+    if (dataset.sessionId) {
+      // Download full ZIP of all bands
+      const a = document.createElement('a');
+      a.href = `${API_BASE}/api/band/export/${dataset.sessionId}?colormap=${colormap}`;
+      a.download = `${dataset.name}_bands.zip`;
+      a.click();
+    } else if (dataset.dataUrl) {
+      const a = document.createElement('a');
+      a.href = dataset.dataUrl;
+      a.download = `${dataset.name}_processed.png`;
+      a.click();
+    }
   };
 
   return (
@@ -39,8 +47,8 @@ export function PipelineRunBar() {
       {/* Status indicator */}
       {status === 'error' && (
         <div className="flex items-center gap-2 text-xs text-sp-error">
-          <AlertCircle className="w-3.5 h-3.5" />
-          Pipeline error
+          <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+          <span>{errorMessage ?? 'Pipeline error'}</span>
         </div>
       )}
       {status === 'complete' && (

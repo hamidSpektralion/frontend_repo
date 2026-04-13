@@ -4,7 +4,7 @@ import type {
   SpectralDataset, ViewerState, ViewMode,
 } from '../types/spectral';
 
-export const API_BASE = 'http://localhost:8000';
+export const API_BASE = import.meta.env.VITE_API_URL ?? 'http://localhost:8000';
 
 interface ViewerStore extends ViewerState {
   setBand: (index: number) => void;
